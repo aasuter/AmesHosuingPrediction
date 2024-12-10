@@ -1,0 +1,658 @@
+---
+title: "College Graduation Rate Predictions"
+author: Andrew Suter
+date: "Last Updated: `r Sys.Date()`"
+output:
+    bookdown::html_document2:
+        highlight: tango
+        toc: true
+        theme: united
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+library(reticulate)
+library(DT)
+library(skimr)
+
+library(ISLR)
+library(tidyverse)
+library(repr)
+library(digest)
+library(infer)
+library(cowplot)
+library(broom)
+library(gridExtra)
+library(faraway)
+library(mltools)
+library(leaps)
+library(glmnet)
+library(GGally)
+library(AER)
+library(caret)
+library(corrplot)
+```
+
+# Write-Up {-}
+
+## Introduction: Introducing our Dataset {-}
+As university students, we all have graduation in our sights, but that is not always realized in some cases. We would like to explore what contributes to the varying graduation rates across colleges. These findings can help "institutions improve their degree completion rates" (DeAngelo et al., 2011). However, "institutional characteristics span a broad range of factors, ranging from financial and other resources"(Bailey et al., 2006), so we will be looking at a variety of variables to complete our analysis.
+
+The goal of our project is to predict the college graduation rate based on the most optimal explanatory variables. Through performing regressions using the techniques taught in this course, we can understand the importance of each feature from the magnitude of the coefficients and the p-values. In doing so, we hope to obtain an understanding into the composition of graduation rates.
+
+The dataset we will be using is the “College” dataset from the ISLR package in R. It contains statistics for many different colleges in the US based on the 1995 issue of US News and World Report. There are 18 variables and 777 total observations, each row pertaining to a different college. Our explanatory variable is `Grad.Rate`, which represents the graduation rate of the corresponding college. We will consider the 17 other variables in the dataset as our explanatory variables for predicting graduation rate. Of our explanatory variables, there are 16 quantitative variables, such as `Outstate`, which corresponds to the out-of-state tuition, and there is 1 categorical variable called `Private`, which pertains to whether the college is private or not. This dataset originally came from the StatLib library at Carnegie Mellon University.
+
+## EDA Checklist {-}
+
+### 1. Formulate the Question {-}
+The goal of our project is to predict the college graduation rate based on the most optimal explanatory variables.
+
+### 2. Read In Our Data {-}
+
+```{r read data, echo=F, message=F, warning=F}
+US_college_data <- ISLR::College %>% filter(Grad.Rate <= 100)
+
+# Remove Outlier Grad.Rate (discovered below) called Cazenovia College (118% grad rate)
+
+# Change Private to Binary Input
+US_college_data$Private <- as.factor(US_college_data$Private)
+
+#Change names of top10perc and top25perc
+names(US_college_data)[names(US_college_data) == 'Top25perc'] <- 'TopTwentyFivePerc'
+names(US_college_data)[names(US_college_data) == 'Top10perc'] <- 'TopTenPerc'
+
+DT::datatable(
+  US_college_data[0:200, ], options = list(
+    scrollX=TRUE
+  )
+)
+```
+#### Variable Descriptions {-}
+
+- Private: A categorical variable indicating "Yes" if the school is private, no if it's not private. <br/>
+- Apps: Number of applications received by the respective school in 1995. <br/>
+- Accept: Number of accepted applicants. <br/>
+TopTenPerc: Percentage of new students in the top 10% of their high school class.<br/>
+- TopTwentyFivePerc: Percentage of new students in the top 25% of their high school class.<br/>
+- F.Undergrad: Number of full-time undergraduates.<br/>
+- P.Undergrad: Number of part-time undergraduates.<br/>
+- Outstate: The out-of-state tuition costs.<br/>
+- Room.Board: Room and board costs.<br/>
+- Books: Estimated books costs.<br/>
+- Personal: Estimated personal spending for each student.<br/>
+- PhD: Percentage of faculty with Ph.D's.<br/>
+- Terminal: Percentage of faculty with a terminal degree.<br/>
+- S.F.Ratio: Student/faculty ratio.<br/>
+- perc.alumni: Percentage of alumni who donate money to the school.<br/>
+- Expend: Instructional expenditure per student.<br/>
+- Grad.Rate: This is our repsonse variable, which represents the graduation rate.
+
+### 3. Check Packaging {-}
+
+```{r check packaging, echo=F, message=F, warning=F}
+str(US_college_data)
+```
+
+### 4. Look at the Top and Bottom! {-}
+```{r top bottom, echo=F, message=F, warning=F}
+
+DT::datatable(
+  head(US_college_data, 3), options = list(
+    scrollX=TRUE
+  )
+)
+
+DT::datatable(
+  tail(US_college_data, 3), options = list(
+    scrollX=TRUE
+  )
+)
+```
+
+### 5. Check the N's {-}
+```{r ns, echo=F, message=F, warning=F}
+dim(US_college_data)
+```
+
+### Additional Analysis {-}
+
+#### Summary Statistics {-}
+```{r summary stats, echo=F, message=F, warning=F}
+US_college_data_long <- gather(select(US_college_data, -Private), factor_key = TRUE)
+US_college_data_stats <-  US_college_data_long %>% group_by(key) %>%
+  summarise(mean= mean(value), sd= sd(value), max = max(value),min = min(value))
+DT::datatable(
+  US_college_data_stats, options = list(
+    scrollX=TRUE
+  )
+)
+```
+#### Check the Distribution {-}
+```{r distribution, echo=F, message=F, warning=F}
+options(repr.plot.width = 15, repr.plot.height = 7)
+
+Apps_hist <- ggplot(US_college_data, aes(x = Apps)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(Apps)), col = "red", size = 1) +
+  xlab("Apps") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+Accept_hist <- ggplot(US_college_data, aes(x = Accept)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(Accept)), col = "red", size = 1) +
+  xlab("Accept") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+Enroll_hist <- ggplot(US_college_data, aes(x = Enroll)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(Enroll)), col = "red", size = 1) +
+  xlab("Enroll") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+Top10perc_hist <- ggplot(US_college_data, aes(x = TopTenPerc)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(TopTenPerc)), col = "red", size = 1) +
+  xlab("TopTenPerc") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+Top25perc_hist <- ggplot(US_college_data, aes(x = TopTwentyFivePerc)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(TopTwentyFivePerc)), col = "red", size = 1) +
+  xlab("TopTwentyFivePerc") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+F.Undergrad_hist <- ggplot(US_college_data, aes(x = F.Undergrad)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(F.Undergrad)), col = "red", size = 1) +
+  xlab("F.Undergrad") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+P.Undergrad_hist <- ggplot(US_college_data, aes(x = P.Undergrad)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(P.Undergrad)), col = "red", size = 1) +
+  xlab("P.Undergrad") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+Outstate_hist <- ggplot(US_college_data, aes(x = Outstate)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(Outstate)), col = "red", size = 1) +
+  xlab("Outstate") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+Room.Board_hist <- ggplot(US_college_data, aes(x = Room.Board)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(Room.Board)), col = "red", size = 1) +
+  xlab("Room.Board") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+Books_hist <- ggplot(US_college_data, aes(x = Books)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(Books)), col = "red", size = 1) +
+  xlab("Books") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+Personal_hist <- ggplot(US_college_data, aes(x = Personal)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(Personal)), col = "red", size = 1) +
+  xlab("Personal") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+PhD_hist <- ggplot(US_college_data, aes(x = PhD)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(PhD)), col = "red", size = 1) +
+  xlab("PhD") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+Terminal_hist <- ggplot(US_college_data, aes(x = Terminal)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(Terminal)), col = "red", size = 1) +
+  xlab("Terminal") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+S.F.Ratio_hist <- ggplot(US_college_data, aes(x = S.F.Ratio)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(S.F.Ratio)), col = "red", size = 1) +
+  xlab("S.F.Ratio") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+perc.alumni_hist <- ggplot(US_college_data, aes(x = perc.alumni)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(perc.alumni)), col = "red", size = 1) +
+  xlab("perc.alumni") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+Expend_hist <- ggplot(US_college_data, aes(x = Expend)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(Expend)), col = "red", size = 1) +
+  xlab("Expend") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+Grad.Rate_hist <- ggplot(US_college_data, aes(x = Grad.Rate)) +
+  geom_histogram(bins = 40, color = "black", fill = "blue") +
+  geom_vline(aes(xintercept = mean(Grad.Rate)), col = "red", size = 1) +
+  xlab("Grad.Rate") +
+  ylab("Count") +
+  theme(
+    text = element_text(size = 10),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
+
+
+plot_grid(Apps_hist,Accept_hist,Enroll_hist, Top10perc_hist, Top25perc_hist, F.Undergrad_hist)
+plot_grid(P.Undergrad_hist,Outstate_hist,Room.Board_hist, Books_hist,Personal_hist,PhD_hist)
+plot_grid(Terminal_hist,S.F.Ratio_hist,perc.alumni_hist, Expend_hist,Grad.Rate_hist)
+
+```
+
+It appears that Apps, Accept, Enroll, TopTenPerc, Books, F.Undergrad, P.Undergrad, Personal, and Expend are right skewed. TopTwentyFivePerc, Outstate, Room.Board, S.F.Ratio, perc.alumni, and Grad.Rate all appear to be at least somewhat normally distributed. PhD and Terminal appear to be left skewed.
+
+```{r grad means, echo=F, message=F, warning=F}
+private_gradrate_means <- US_college_data %>% select(Private, Grad.Rate) %>% group_by(Private) %>% summarise(mean = mean(Grad.Rate))
+DT::datatable(
+  private_gradrate_means, options = list(
+    scrollX=TRUE
+  )
+)
+```
+
+The mean graduation rates of private and non-private school appear to be quite different. Let's construct some box plots to assess the difference in their Grad.Rate distributions.
+
+```{r grad means boxplot, echo=F, message=F, warning=F}
+private_gradrate_boxplots <- US_college_data %>%
+  ggplot() +
+  geom_boxplot(aes(Private, Grad.Rate, fill = Private)) +
+  theme(
+    text = element_text(size = 18),
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  ) +
+  ggtitle("Boxplots of Graduation Rate by School Types") +
+  xlab("Private (Y) or Public (N) Schools") +
+  ylab("Graduation Rate") +
+  stat_summary(aes(Private, Grad.Rate, fill = Private),
+               fun = mean, colour = "yellow", geom = "point",
+               shape = 18, size = 5
+  )
+
+
+private_gradrate_boxplots
+```
+
+There does appear to be a difference in graduation rates between private school and non-private schools, with the observed mean and median graduation rates of private schools being higher than non-private schools. In addition, the interquartile range of graduation rates for private schools appears to be slightly larger than for non-private schools, suggesting that graduation rates for private schools could have a greater spread.
+
+#### Correlations Between Our Variables {-}
+
+We will now assess collinearity between different variables with pairplots and a heatmap.
+
+```{r correlation, echo=F, message=F, warning=F}
+US_college_data_pairplots1 <- select(US_college_data, -Private, -Expend, -perc.alumni, -S.F.Ratio, -Terminal,
+                                     -PhD, -Personal, -Books, -Room.Board, -Outstate, -P.Undergrad) %>%
+        ggpairs(progress = FALSE) +
+        theme(
+                text = element_text(size = 15),
+                plot.title = element_text(face = "bold"),
+                axis.title = element_text(face = "bold")
+        )
+
+US_college_data_pairplots2 <- select(US_college_data, -Private, -Apps, -Accept, -Enroll, -TopTenPerc, -TopTwentyFivePerc,
+                                     -Books, -Room.Board, -Outstate, -P.Undergrad, -F.Undergrad) %>%
+        ggpairs(progress = FALSE) +
+        theme(
+                text = element_text(size = 15),
+                plot.title = element_text(face = "bold"),
+                axis.title = element_text(face = "bold")
+        )
+
+US_college_data_pairplots3 <- select(US_college_data,  Books, Room.Board, Outstate, P.Undergrad, Grad.Rate) %>%
+        ggpairs(progress = FALSE) +
+        theme(
+                text = element_text(size = 15),
+                plot.title = element_text(face = "bold"),
+                axis.title = element_text(face = "bold")
+        )
+
+US_college_data_pairplots1
+US_college_data_pairplots2
+US_college_data_pairplots3
+
+US_college_data_correlations <- cor(select(US_college_data, -Private))
+
+corrplot(US_college_data_correlations)
+```
+
+The two plots above indicate that there are some variables that are highly correlated. Accept and Apps, Enroll and Apps, F.Undergrad and Apps, Enroll and Accept, F.Undergrad and Accept, F.Undergrad and Enroll, TopTwentyFivePerc and TopTenPerc, and Terminal and PhD have relatively high correlations This is important to point out because it could have an impact on the standard errors of the slope coefficients produced by our linear models. However, some of the variables are expected to have high correlations by their nature, such as TopTwentyFivePerc and TopTenPerc since they are measuring the same thing, but in different quantities.
+
+We will be using LOOCV cross validation.
+
+## Model Development! {-}
+Split Training and Testing (70-30% Basis) to assess prediction performance.
+
+```{r split test train, echo=T, message=F, warning=F}
+set.seed(1337)
+
+US_college_data_index <- createDataPartition(US_college_data$Grad.Rate, p = 0.70, list = FALSE)
+
+training_college <- US_college_data[US_college_data_index, ]
+testing_college <- US_college_data[-US_college_data_index, ]
+
+train_control_LV <- trainControl(method = "LOOCV")
+```
+
+### Full Model {-}
+```{r full model, echo=T, message=F, warning=F}
+full_cv_LV <- train(
+        form = Grad.Rate ~ . , data = training_college,
+        trControl = train_control_LV,
+        method = "lm")
+
+full_RMSE <- full_cv_LV$results$RMSE
+summary(full_cv_LV$finalModel)
+```
+
+### Backwards Step-Wise Selection {-}
+```{r backwards, echo=T, message=F, warning=F}
+back_cv_LV <- train(Grad.Rate ~ ., data = training_college,
+                    method = "leapBackward",
+                    tuneGrid = data.frame(nvmax = 1:17),
+                    trControl = train_control_LV
+)
+#Model with the best performance selected by backward selection
+back_cv_LV$bestTune
+
+summary(back_cv_LV$finalModel)
+
+back_red_cv_LV <- train(
+        form = Grad.Rate ~ Private + Apps + TopTenPerc + F.Undergrad + P.Undergrad + Outstate + Room.Board + Books +
+                PhD + perc.alumni + Expend, data = training_college,
+        trControl = train_control_LV,
+        method = "lm")
+
+back_RMSE <- back_red_cv_LV$results$RMSE
+summary(back_red_cv_LV)
+```
+
+### Forwards Step-Wise Selection {-}
+
+```{r forward, echo=T, message=F, warning=F}
+forw_cv_LV <- train(Grad.Rate ~ ., data = training_college,
+                    method = "leapForward",
+                    tuneGrid = data.frame(nvmax = 1:17),
+                    trControl = train_control_LV
+)
+#Model with the best performance selected by forward selection
+forw_cv_LV$bestTune
+
+summary(forw_cv_LV$finalModel)
+
+forw_red_cv_LV <- train(
+        form = Grad.Rate ~ Private + Apps + TopTenPerc + TopTwentyFivePerc + F.Undergrad + P.Undergrad + Outstate + Room.Board +
+                PhD + perc.alumni + Expend, data = training_college,
+        trControl = train_control_LV,
+        method = "lm")
+
+forw_RMSE <- forw_red_cv_LV$results$RMSE
+summary(forw_red_cv_LV)
+```
+
+### Ridge and Lasso Regression {-}
+
+We remove the Private variable in this case because it is inflating the standard error values of the slope coefficients in our linear models.
+
+```{r ridge lasso, echo=T, message=F, warning=F}
+X_train<- model.matrix(object = Grad.Rate ~ Apps + Accept + Enroll + TopTenPerc + TopTwentyFivePerc + F.Undergrad + P.Undergrad + Outstate +
+        Room.Board + Books + Personal + PhD + Terminal + S.F.Ratio + perc.alumni + Expend,
+                       data = training_college)[, -1]
+
+Y_train <- training_college[, "Grad.Rate"]
+
+# Build the models
+ridge_cv_LV <- train(
+        y = Y_train,
+        x = X_train,
+        data = training_college, method = "glmnet",
+        trControl = train_control_LV,
+        tuneGrid = expand.grid(alpha = 0, lambda = exp(seq(-5, 10, 0.1)))
+)
+
+lasso_cv_LV <- train(
+        y = Y_train,
+        x = X_train,
+        data = training_college, method = "glmnet",
+        trControl = train_control_LV,
+        tuneGrid = expand.grid(alpha = 1, lambda = exp(seq(-5, 10, 0.1)))
+)
+plot(lasso_cv_LV, xlim=c(0,500), main = "LASSO regression")
+plot(ridge_cv_LV, xlim=c(0,500), main = "Ridge regression")
+```
+
+According to the plots above, it appears that ridge regression provides smaller RMSE's for almost all lambda values between 0 and 500, suggesting that ridge regression could be the superior option.
+
+```{r best lamda, echo=F, message=F, warning=F}
+best_lambda = tibble('Best Ridge Lambda' = round(ridge_cv_LV$bestTune$lambda, 4), 'Best Lasso Lambda' = round(lasso_cv_LV$bestTune$lambda, 4))
+DT::datatable(
+        best_lambda, options = list(
+                scrollX=TRUE
+        )
+)
+```
+
+It is also important to note that the lambdas produced by the two algorthims are quite different.
+
+```{r ridge lasso min cv, echo=T, message=F, warning=F}
+ridge_min_cv_LV <- train(
+        y = Y_train,
+        x = X_train,
+        data = training_college, method = "glmnet",
+        trControl = train_control_LV,
+        tuneGrid = expand.grid(alpha = 0, lambda = ridge_cv_LV$bestTune$lambda)
+)
+
+lasso_min_cv_LV <- train(
+        y = Y_train,
+        x = X_train,
+        data = training_college, method = "glmnet",
+        trControl = train_control_LV,
+        tuneGrid = expand.grid(alpha = 1, lambda = lasso_cv_LV$bestTune$lambda)
+)
+ridge_RMSE <- ridge_min_cv_LV$results$RMSE
+lasso_RMSE <- lasso_min_cv_LV$results$RMSE
+
+ridge_min_cv_LV
+lasso_min_cv_LV
+```
+
+## Model Performance {-}
+Now, we will calculate the RMSE values of each model to assess which model(s) have the best performance.
+
+```{r performance, echo=F, message=F, warning=F}
+full_R_MSE_model <-
+  tibble(
+    Model = "OLS Full Regression",
+    R_MSE = full_RMSE
+  )
+
+
+forw_R_MSE_model <-
+  tibble(
+    Model = "OLS Reduced Regression with Forward Selection",
+    R_MSE = forw_RMSE
+  )
+
+back_R_MSE_model <-
+  tibble(
+    Model = "OLS Reduced Regression with backward Selection",
+    R_MSE = back_RMSE
+  )
+
+ridge_R_MSE_model <-
+  tibble(
+    Model = "Ridge Regression with minimum MSE",
+    R_MSE = ridge_RMSE
+  )
+
+lasso_R_MSE_model <-
+  tibble(
+    Model = "Lasso Regression with minimum MSE",
+    R_MSE = lasso_RMSE
+  )
+
+R_MSE_Models <- rbind(full_R_MSE_model, forw_R_MSE_model, back_R_MSE_model, ridge_R_MSE_model, lasso_R_MSE_model)
+
+
+DT::datatable(
+  arrange(R_MSE_Models, R_MSE), options = list(
+    scrollX=TRUE
+  )
+)
+```
+
+Here we can see our Backward selection model provides us with the best RMSE on the cross validated models. This is used with the validation set provided by LOOCV.
+
+## Predictions {-}
+```{r predictions, echo=T, message=F, warning=F}
+back_cv_LV_pred <- predict(back_red_cv_LV,
+                           newdata =
+                             select(testing_college, -Accept, -Enroll, -TopTwentyFivePerc, -Personal, -S.F.Ratio, -Terminal)
+)
+```
+
+## Results {-}
+```{r results, echo=F, message=F, warning=F}
+back_R_MSE_model <-
+  tibble(
+    Model = "OLS Reduced Regression with backward Selection",
+    R_MSE = rmse(
+      preds = back_cv_LV_pred,
+      actuals = testing_college$Grad.Rate
+    )
+  )
+DT::datatable(
+  back_R_MSE_model, options = list(
+    scrollX=TRUE
+  )
+)
+
+```
+
+## Method {-}
+The report is trustworthy due to the dataset’s high authority and breadth of coverage. The data is obtained from the US News and World Report which has now 73 years of history and has “been known primarily for its influential ranking and annual reports of colleges and graduate schools” (Wikipedia contributors, 2021). Additionally, the data covers 777 colleges which is sufficient for the use of CLT and therefore satisfies the assumption of normality.
+
+Predictive models are built and trained in order to predict new observations. We built and trained our model on two separate datasets: a training and testing set. In order to create these we split the data set into two portions (70% training set and 30% testing set). Firstly we created a full model that included all inputs; this will be our full additive model. After using `predict()` we obtained the predicted values. We calculated the RMSE on the test set to be 13.61. The RMSE finds the standard deviation of the prediction errors $y_i = \hat{y}_i$ and has the same units as our response variable; graduation rate. The smaller this value is, the better because it means that our predicted values are closer to the actual data. We used this quantity to evaluate the predictive model. We will be calculating RMSE on each of our models in order to evaluate and find the best possible model.
+
+We will use backward, forward, ridge and lasso algorithms to find smaller models and evaluate them against the full model using RMSE. The forward method using the `regsubsets()` function starts with the null model and *adds* variables one by one, and evaluates each of those models. The backwards method also uses `regsubsets()` but starts with the full model and *removes* variables at each step and evaluates them that way.
+
+The forward and backward methods will create 16 models and we will choose the best one by looking at the out-of-sample prediction accuracy. Mallow’s $C_p$ value tells us this value; by selecting the smallest $C_p$ value we will know the optimal number of variables to include for our models. We will conduct the $C_p$ test on the models created by both the forward and backward algorithms. The $C_p$ values found to be the most optimal are 13 and 11 for the forward and backward algorithms respectively. We then train the models selected by each algorithm using `lm()`. Using those trained models we predict the values of the testing set (we had created the test set earlier when splitting the original data) on them using the function `predict()`. Using the models found using these two algorithms we then calculated the RMSE to be 13.62, 13.69 for the forward and backwards methods respectively. The RMSE of the forward selection is larger than that of the full model so we expect that a subset of variables will not create the best possible model.
+
+The next algorithm we implemented was ridge regression. Since ridge is useful to address multi collinearity this method would be an asset to our research as some of our variables were highly correlated (ex. `Apps`, `Accept`, and `Enroll`). The function `cv.glmnet()` searches for potential values of the tuning parameter; lambda. Lambda controls how much the regression coefficients will be shrunk; however in the ridge algorithm, the coefficients will never shrink to zero. The lambda selected is 2.0138, this specific value of lambda provides the model with the smallest test MSE using cross-validation methods. The RMSE value is calculated to be 13.57.
+
+Next, we use the lasso regression model. In this method, coefficients are able to shrink to zero, so this model may use a smaller subset of variables than the previous methods did. First we find the lambda that minimizes the MSE using cross-validation methods; we found it to be 0.1496. Lastly, we calculate RMSE once again (13.60) and with that we are able to compare the different RMSE to find the best predictive model. After comparing the RMSE of each model we found that the Ridge Regression had the lowest RMSE. Therefore according to our investigation the ridge model is the best model to predict graduation rate with.
+
+## Discussion {-}
+The results from our final table were both expected and unexpected. We expected the Ridge regression model to have the least test RMSE since it is often used to address multi collinearity problems. As we can see from the ggpairs plot, few of the input variables such as Apps, Accept, and Enroll are highly correlated with each other and therefore we had the intuition that the Ridge model would perform better than the other models before conducting any data analysis. Similarly, since we learned in lectures that shrinkage methods gain a lower variance to gain prediction performance at the cost of biased estimated coefficients, we also expected the Lasso model to outperform the full model as well as the stepwise algorithm models.
+
+
+However, we were not expecting the OLS full regression model to outperform the reduced and selected models by forward and backward selection. The stepwise algorithms are greedy algorithms and are generally considered impactful in that they aim to select the most significant inputs. From the printed summaries of the stepwise algorithms, we can see that they addressed the issue of multi collinearity by dropping variables that are highly correlated with each other. Neither of the selective models included “App”, “Accept” and “Enroll” with each other, which is something not done in fitting the full model. With the issue of multi collinearity out of the way, we were really anticipating the selective models to outperform the full model just like all the examples in our worksheets and tutorials.
+
+
+Additionally, we used the LOOCV method for data splitting and its ups and downs were apparent with our dataset. We see that it has zero randomness in its splits and it provides a much less biased measure of test RMSE compared to the hold-out method. As we train (n-1) observations in the training set, almost all the observations are used in fitting the model and therefore the bias will be lower which consequently avoids overestimating the test error rate. However, as we are feeding the model almost all the training data to learn, there is a lot of overlap between training sets. As a result, our estimates can be subject to high variance since the test error estimates are highly correlated. Another drawback that we noticed about the LOOCV is that it is computationally expensive. With a total of 777 observations, we were fitting 777 models to train and test, which took a while (2 ~ 3 minutes) for our computer to process. The computational time stacks up exponentially as we add in more observations and this is something that we will keep in mind in future research/projects.
+
+
+Lastly, while our findings were targeted towards answering our research question, it can also lead to other questions.
+
+* What policies can universities implement to increase their graduation rates? Students wishing to graduate with the best possible chance of success. Our data analysis provides intuition and understanding of the significance of the input variables which allows universities to evaluate their situation more efficiently and make further improvements to maximize graduation rates.
+
+* This information, if made available to high school counsellors or people who are currently wanting to apply to universities, can be used to predict their chances of graduating from the schools of their choice.
+
+* A large portion of UBC students commute from across BC to arrive at school. Research into whether commuting times increase or decrease graduation rates would be useful for learners to make decisions regarding housing, which university to attend, etc... This could help universities decide where to place a second campus (if applicable).
+
+# References {-}
+1. James, G., Witten, D., Hastie, T., and Tibshirani, R. (2013) An Introduction to Statistical Learning with applications in R, www.StatLearning.com, Springer-Verlag, New York
+DeAngelo, L., Franke, R., Hurtado, S., Pryor, J. H., & Tran, S. (2011). Completing college: Assessing graduation rates at four-year institutions. Los Angeles: Higher Education Research Institute, UCLA.
+Scott, M., Bailey, T. & Kienzl, G. Relative Success? Determinants of College Graduation Rates in Public and Private Colleges in the U.S.. Res High Educ 47, 249–279 (2006). https://doi.org/10.1007/s11162-005-9388-y
+Wikipedia contributors. "U.S. News & World Report." Wikipedia, The Free Encyclopedia. Wikipedia, The Free Encyclopedia, 29 Oct. 2021. Web. 6 Nov. 2021.
+
+# Links {-}
+
+- [Repo](https://github.com/aasuter/CollegePredictions)
+- [LinkedIn](https://www.linkedin.com/in/andrew-a-suter/)
+- [Website](https://aasuter.com)
